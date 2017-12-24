@@ -30,7 +30,9 @@ def _mask(X, density):
 # TODO: add fixtures and break down into multiple tests
 @pytest.mark.parametrize(('n', 'd', 'seed', 'M', 'n_iter'),
                          [
-                             (10, 25, 0, 3, 2)
+                             (100, 25, 0, 1, 2),
+                             (20, 25, 0, 3, 2),
+                             (21, 26, 1, 5, 2)
                          ])
 def test_distr_matches_centralized(n, d, seed, M, n_iter):
     X = _gen_random_mat(n, d, 0.1, random_seed=seed)
