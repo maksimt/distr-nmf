@@ -264,6 +264,8 @@ class AggregateResiduals(produce_autotargeting_class(
             # if running distributed: depend on GetResidualsFromNet which
                 # depends on SendResidualsToNet
 
+        yield rtv
+
     def run(self):
         numer = 0
         denom = 0
@@ -289,9 +291,9 @@ class AggregateResiduals(produce_autotargeting_class(
         numer = numer - self.reg_t_l1
         denom = denom + self.reg_t_l2
 
-        with self.output['numer'].open('w') as f:
+        with self.output()['numer'].open('w') as f:
             np.save(f, numer)
-        with self.output['denom'].open('w') as f:
+        with self.output()['denom'].open('w') as f:
             np.save(f, denom)
 
 
