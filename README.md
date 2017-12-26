@@ -3,4 +3,4 @@ Distributed Non-negative Matrix Factorization using a modified alternating rank 
 
 ### TODO before release:
 1. Include dependencies.
-2. Add tests.
+2. Add (more) tests.
