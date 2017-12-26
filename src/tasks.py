@@ -221,6 +221,80 @@ class EvalFroFitError(produce_autotargeting_class(
             pickle.dump(evals, f, 0)
 
 
+class AggregateResiduals(produce_autotargeting_class(
+    base_path=base_path,
+    output={'numer':0, 'denom':0}
+)):
+    nmf_params = luigi.DictParameter()
+    dataset_params = luigi.DictParameter()
+    n_iter = luigi.IntParameter()
+    topic_num = luigi.IntParameter()
+
+    def requires(self):
+        self.k = self.nmf_params['k']
+        self.agg = self.nmf_params['agg']
+        self.reg_t_l1 = self.nmf_params['reg_t_l1']
+        self.reg_t_l2 = self.nmf_params['reg_t_l2']
+        self.init = self.nmf_params['init']
+
+        if self.n_iter >= 1:
+            rtv = {}
+            rtv['resid'] = {}
+            prev_topic = self.topic_num - 1
+
+            # rolling back index to end of previous loop
+            if prev_topic < 0:
+                if self.n_iter >= 1:
+                    prev_iter = self.n_iter - 1
+                prev_topic = self.k - 1
+            else:
+                prev_iter = self.n_iter
+
+
+            # if running locally:
+            for m in range(self.dataset_params['M']):
+                rtv['resid'][m] = GetResiduals(
+                    nmf_params=self.nmf_params,
+                    dataset_params=self.dataset_params,
+                    n_iter=prev_iter,
+                    group_id=m,
+                    topic_num=prev_topic
+                )
+
+            # if running distributed: depend on GetResidualsFromNet which
+                # depends on SendResidualsToNet
+
+    def run(self):
+        numer = 0
+        denom = 0
+
+        _input = self.load_input_dict(all_numpy=True)
+
+        for m in range(self.dataset_params['M']):  # aggregate the batches
+            if self.n_iter >= 1:
+                wR = _input['resid'][m]['wR']
+                nw = _input['resid'][m]['nw']
+            if self.agg == 'double_precision_nonprivate':
+                numer += wR
+                denom += nw
+            elif self.agg.startswith('int_conversion_private'):
+                precision = int(self.agg.split('|')[1])
+                numer += _to_fixed(wR, precision)
+                denom += _to_fixed(nw, precision)
+
+        if self.agg.startswith('int_conversion_private'):
+            numer = _from_fixed(numer, precision)
+            denom = _from_fixed(denom, precision)
+
+        numer = numer - self.reg_t_l1
+        denom = denom + self.reg_t_l2
+
+        with self.output['numer'].open('w') as f:
+            np.save(f, numer)
+        with self.output['denom'].open('w') as f:
+            np.save(f, denom)
+
+
 class GetTopics(produce_autotargeting_class(
     base_path=base_path
 )):
@@ -238,9 +312,6 @@ class GetTopics(produce_autotargeting_class(
 
         if self.n_iter >= 1:
             rtv = {}
-            # rtv['W'] = {}
-            # rtv['X'] = {}
-            rtv['resid'] = {}
             prev_topic = self.topic_num - 1
 
             # rolling back index to end of previous loop
@@ -250,26 +321,16 @@ class GetTopics(produce_autotargeting_class(
                 prev_topic = self.k - 1
             else:
                 prev_iter = self.n_iter
-
-            logging.log(logging.INFO,
-                        '{0}: prev_topic={1} prev_iter={2}'.format(self,
-                                                                   prev_topic,
-                                                                   prev_iter))
-
-            for m in range(self.dataset_params['M']):
-                rtv['resid'][m] = GetResiduals(
-                    nmf_params=self.nmf_params,
-                    dataset_params=
-                    self.dataset_params,
-                    n_iter=prev_iter,
-                    group_id=m,
-                    topic_num=prev_topic
-                )
             rtv['prev_T'] = GetTopics(nmf_params=self.nmf_params,
                                       dataset_params=self.dataset_params,
                                       n_iter=prev_iter,
                                       topic_num=prev_topic
                                       )
+
+            rtv['Res'] = AggregateResiduals(nmf_params=self.nmf_params,
+                                            dataset_params=self.dataset_params,
+                                            n_iter=self.n_iter,
+                                            topic_num=self.topic_num)
 
             yield rtv
 
@@ -284,28 +345,8 @@ class GetTopics(produce_autotargeting_class(
             _input = self.load_input_dict(all_numpy=True)
             T = _input['prev_T']
 
-            numer = 0
-            denom = 0
-
-            for m in range(self.dataset_params['M']):  # aggregate the batches
-                if self.n_iter >= 1:
-                    wR = _input['resid'][m]['wR']
-                    nw = _input['resid'][m]['nw']
-
-                if self.agg == 'double_precision_nonprivate':
-                    numer += wR
-                    denom += nw
-                elif self.agg.startswith('int_conversion_private'):
-                    precision = int(self.agg.split('|')[1])
-                    numer += _to_fixed(wR, precision)
-                    denom += _to_fixed(nw, precision)
-
-            if self.agg.startswith('int_conversion_private'):
-                numer = _from_fixed(numer, precision)
-                denom = _from_fixed(denom, precision)
-
-            numer = numer - self.reg_t_l1
-            denom = denom + self.reg_t_l2
+            numer = _input['Res']['numer']
+            denom = _input['Res']['denom']
 
             T[self.topic_num, :] = np.maximum(numer /
                                               (denom + np.spacing(1)), 0)

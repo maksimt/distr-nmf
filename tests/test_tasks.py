@@ -73,7 +73,7 @@ def test_distr_matches_centralized(n, d, seed, M, n_iter):
     }
     dataset_params = {"M": M, "d": d, "dataset_name": X_fn, "n": n}
 
-    for it in range(n_iter):
+    for it in range(1, n_iter):
         GT = tasks.GetTopics(nmf_params=nmf_params,
                              dataset_params=dataset_params,
                              n_iter=it, topic_num=K - 1)
