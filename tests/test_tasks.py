@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 import os
-from distr_nmf.src import tasks
+from distr_nmf.src import tasks_nmf
 import luigi
 from matrixops.transform import normalize, tfidf
 from rri_nmf import nmf
@@ -37,7 +37,7 @@ def _mask(X, density):
 def test_distr_matches_centralized(n, d, seed, M, n_iter):
     X = _gen_random_mat(n, d, 0.1, random_seed=seed)
     idf = True
-    tasks.remove_intermediate = False
+    tasks_nmf.remove_intermediate = False
 
     X_fn = '/tmp/X.npy'
     np.save('/tmp/X.npy', X)
@@ -56,11 +56,11 @@ def test_distr_matches_centralized(n, d, seed, M, n_iter):
         X = tfidf(X)
     X = normalize(X)
 
-    LocalNMFTaks = tasks.RunMultiWorkerLocalNMF(dataset_name=X_fn,
-                                                k=K,
-                                                n_iter=n_iter,
-                                                idf=idf,
-                                                M=M)
+    LocalNMFTaks = tasks_nmf.RunMultiWorkerLocalNMF(dataset_name=X_fn,
+                                                    k=K,
+                                                    n_iter=n_iter,
+                                                    idf=idf,
+                                                    M=M)
     luigi.build([LocalNMFTaks], local_scheduler=True)
 
     nmf_params = {
@@ -74,19 +74,19 @@ def test_distr_matches_centralized(n, d, seed, M, n_iter):
     dataset_params = {"M": M, "d": d, "dataset_name": X_fn, "n": n}
 
     for it in range(1, n_iter):
-        GT = tasks.GetTopics(nmf_params=nmf_params,
-                             dataset_params=dataset_params,
-                             n_iter=it, topic_num=K - 1)
+        GT = tasks_nmf.GetTopics(nmf_params=nmf_params,
+                                 dataset_params=dataset_params,
+                                 n_iter=it, topic_num=K - 1)
         if compare_W:
             if it >= 0:
                 W = np.zeros((n, K))
                 for m in range(dataset_params['M']):
-                    Ws = tasks.GetWeights(dataset_params=dataset_params,
-                                          nmf_params=nmf_params,
-                                          n_iter=it,
-                                          topic_num=K - 1,
-                                          group_id=m
-                                          )
+                    Ws = tasks_nmf.GetWeights(dataset_params=dataset_params,
+                                              nmf_params=nmf_params,
+                                              n_iter=it,
+                                              topic_num=K - 1,
+                                              group_id=m
+                                              )
                     with Ws.output().open() as f:
                         W_I = np.load(f)
                     I = range(m, n, dataset_params['M'])

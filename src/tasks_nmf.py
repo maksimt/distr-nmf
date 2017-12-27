@@ -10,6 +10,7 @@ import scipy as sp
 import os
 import logging
 import copy
+import datetime
 
 # local imports
 from model_config import tm_nmf
@@ -173,7 +174,7 @@ def _from_fixed(x, precision=20):
 class EvalFroFitError(AutoLocalOutputMixin(base_path=base_path + '/evals/'),
                       LoadInputDictMixin,
                       luigi.Task
-):
+                      ):
     nmf_params = luigi.DictParameter()
     dataset_params = luigi.DictParameter()
     n_iter = luigi.IntParameter()
@@ -224,10 +225,68 @@ class EvalFroFitError(AutoLocalOutputMixin(base_path=base_path + '/evals/'),
             pickle.dump(evals, f, 0)
 
 
+class GetResidualsFromNetwork(
+    AutoLocalOutputMixin(base_path=base_path, output={'wR': 0, 'nw': 0}),
+    LoadInputDictMixin,
+    luigi.Task,
+    MultiPartyComputationParticipantMixin
+):
+    nmf_params = luigi.DictParameter()
+    dataset_params = luigi.DictParameter()
+    n_iter = luigi.IntParameter()
+    topic_num = luigi.IntParameter()
+
+    def requires(self):
+        if self.dataset_params['M'] > 1:
+            raise NotImplementedError(
+                'SendResidualsToNetwork doesnt support '
+                'more than 1 local worker (M>1) yet.')
+        self.k = self.nmf_params['k']
+        self.agg = self.nmf_params['agg']
+        self.reg_t_l1 = self.nmf_params['reg_t_l1']
+        self.reg_t_l2 = self.nmf_params['reg_t_l2']
+        self.init = self.nmf_params['init']
+
+        if self.n_iter >= 1:
+            rtv = {}
+            prev_topic = self.topic_num - 1
+
+            # rolling back index to end of previous loop
+            if prev_topic < 0:
+                if self.n_iter >= 1:
+                    prev_iter = self.n_iter - 1
+                prev_topic = self.k - 1
+            else:
+                prev_iter = self.n_iter
+
+            rtv['resid'] = GetResiduals(
+                nmf_params=self.nmf_params,
+                dataset_params=self.dataset_params,
+                n_iter=prev_iter,
+                group_id=0,
+                topic_num=prev_topic
+            )
+
+    def run(self):
+        inp = self.load_input_dict()
+
+        self.send_to_MPC(inp['wR'], 'wR')
+        self.send_to_MPC(inp['nw'], 'nw')
+
+        # each receive call will block; potentially these could be done
+        # asynchronouslly, but that is more appropriate to be handled within
+        # the send/receive implementation
+        wR = self.receive_from_MPC('wR')
+        nw = self.receive_from_MPC('nw')
+
+        with self.output()['wR'].open('w') as f:
+            np.save(f, wR)
+        with self.output()['nw'].open('w') as f:
+            np.save(f, nw)
 
 
 class AggregateResiduals(
-    AutoLocalOutputMixin(base_path=base_path, output={'numer':0, 'denom':0}),
+    AutoLocalOutputMixin(base_path=base_path, output={'numer': 0, 'denom': 0}),
     LoadInputDictMixin,
     luigi.Task
 ):
@@ -256,7 +315,6 @@ class AggregateResiduals(
             else:
                 prev_iter = self.n_iter
 
-
             # if running locally:
             for m in range(self.dataset_params['M']):
                 rtv['resid'][m] = GetResiduals(
@@ -267,7 +325,7 @@ class AggregateResiduals(
                     topic_num=prev_topic
                 )
 
-            # if running distributed: depend on GetResidualsFromNet which
+                # if running distributed: depend on GetResidualsFromNet which
                 # depends on SendResidualsToNet
 
         yield rtv
@@ -306,7 +364,7 @@ class AggregateResiduals(
 class GetTopics(AutoLocalOutputMixin(base_path=base_path),
                 LoadInputDictMixin,
                 luigi.Task
-):
+                ):
     nmf_params = luigi.DictParameter()
     dataset_params = luigi.DictParameter()
     n_iter = luigi.IntParameter()
@@ -478,7 +536,7 @@ class GetResiduals(
 class GetWeights(AutoLocalOutputMixin(base_path=base_path),
                  LoadInputDictMixin,
                  luigi.Task
-):
+                 ):
     dataset_params = luigi.DictParameter()
     nmf_params = luigi.DictParameter()
     n_iter = luigi.IntParameter()
@@ -595,7 +653,7 @@ class GetWeights(AutoLocalOutputMixin(base_path=base_path),
 class GenDataset(AutoLocalOutputMixin(base_path=base_path),
                  LoadInputDictMixin,
                  luigi.Task
-):
+                 ):
     group_id = luigi.IntParameter()
     dataset_params = luigi.DictParameter()
     nmf_params = luigi.DictParameter()
@@ -637,7 +695,7 @@ class GenDataset(AutoLocalOutputMixin(base_path=base_path),
 class GetTFIDF(AutoLocalOutputMixin(base_path=base_path),
                LoadInputDictMixin,
                luigi.Task
-):
+               ):
     dataset_name = luigi.Parameter()
 
     def run(self):
