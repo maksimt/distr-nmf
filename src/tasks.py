@@ -20,7 +20,7 @@ from exec_config import base_path, log_filename, log_level, available_RAM, \
 from matlabinterface import datasets
 from matrixops import transform
 from experiment_utils.luigi_interface.MTask import \
-    produce_autotargeting_class
+    AutoLocalOutputMixin, LoadInputDictMixin
 from experiment_utils import expm_utils
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -170,8 +170,10 @@ def _from_fixed(x, precision=20):
     return x.astype(np.double)
 
 
-class EvalFroFitError(produce_autotargeting_class(
-    base_path=base_path + '/evals/')):
+class EvalFroFitError(AutoLocalOutputMixin(base_path=base_path + '/evals/'),
+                      LoadInputDictMixin,
+                      luigi.Task
+):
     nmf_params = luigi.DictParameter()
     dataset_params = luigi.DictParameter()
     n_iter = luigi.IntParameter()
@@ -197,7 +199,8 @@ class EvalFroFitError(produce_autotargeting_class(
         return reqs
 
     def run(self):
-        # TODO: eval for large datasets incrementally
+        # TODO: eval for large datasets incrementally (i.e. don't load entire
+        #  X at once)
         inp = self.load_input_dict(all_numpy=True)
         n, d, M, k = self.dataset_params['n'], self.dataset_params['d'], \
                      self.dataset_params['M'], self.nmf_params['k']
@@ -221,10 +224,13 @@ class EvalFroFitError(produce_autotargeting_class(
             pickle.dump(evals, f, 0)
 
 
-class AggregateResiduals(produce_autotargeting_class(
-    base_path=base_path,
-    output={'numer':0, 'denom':0}
-)):
+
+
+class AggregateResiduals(
+    AutoLocalOutputMixin(base_path=base_path, output={'numer':0, 'denom':0}),
+    LoadInputDictMixin,
+    luigi.Task
+):
     nmf_params = luigi.DictParameter()
     dataset_params = luigi.DictParameter()
     n_iter = luigi.IntParameter()
@@ -297,9 +303,10 @@ class AggregateResiduals(produce_autotargeting_class(
             np.save(f, denom)
 
 
-class GetTopics(produce_autotargeting_class(
-    base_path=base_path
-)):
+class GetTopics(AutoLocalOutputMixin(base_path=base_path),
+                LoadInputDictMixin,
+                luigi.Task
+):
     nmf_params = luigi.DictParameter()
     dataset_params = luigi.DictParameter()
     n_iter = luigi.IntParameter()
@@ -400,10 +407,9 @@ class GetTopics(produce_autotargeting_class(
 
 
 class GetResiduals(
-    produce_autotargeting_class(
-        base_path=base_path,
-        output={'wR': 0, 'nw': 0}
-    )
+    AutoLocalOutputMixin(base_path=base_path, output={'wR': 0, 'nw': 0}),
+    LoadInputDictMixin,
+    luigi.Task
 ):
     dataset_params = luigi.DictParameter()
     nmf_params = luigi.DictParameter()
@@ -469,9 +475,9 @@ class GetResiduals(
             np.save(f, curr['nw'])
 
 
-class GetWeights(produce_autotargeting_class(
-    base_path=base_path
-)
+class GetWeights(AutoLocalOutputMixin(base_path=base_path),
+                 LoadInputDictMixin,
+                 luigi.Task
 ):
     dataset_params = luigi.DictParameter()
     nmf_params = luigi.DictParameter()
@@ -586,9 +592,10 @@ class GetWeights(produce_autotargeting_class(
             np.save(f, W)
 
 
-class GenDataset(produce_autotargeting_class(
-    base_path=base_path
-)):
+class GenDataset(AutoLocalOutputMixin(base_path=base_path),
+                 LoadInputDictMixin,
+                 luigi.Task
+):
     group_id = luigi.IntParameter()
     dataset_params = luigi.DictParameter()
     nmf_params = luigi.DictParameter()
@@ -627,9 +634,10 @@ class GenDataset(produce_autotargeting_class(
             np.save(f, X_I)
 
 
-class GetTFIDF(produce_autotargeting_class(
-    base_path=base_path
-)):
+class GetTFIDF(AutoLocalOutputMixin(base_path=base_path),
+               LoadInputDictMixin,
+               luigi.Task
+):
     dataset_name = luigi.Parameter()
 
     def run(self):
