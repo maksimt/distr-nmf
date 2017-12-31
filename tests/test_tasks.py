@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 import os
 from distr_nmf.src import tasks_nmf
+from distr_nmf.src.exec_config import log_mpc_filename
 import luigi
 from matrixops.transform import normalize, tfidf
 from rri_nmf import nmf
@@ -151,15 +152,9 @@ def test_distr_matches_centralized(n, d, seed, M, n_iter, mode):
             assert np.allclose(W, base_nmf_soln['W'])
         assert np.allclose(T, base_nmf_soln['T'])
 
-def pass_test_dummy_MPC():
-    X = _gen_random_mat(10, 25, 0.1, random_seed=0)
-    idf = True
-    tasks_nmf.remove_intermediate = False
-
-    X_fn = '/tmp/X.npy'
-    np.save('/tmp/X.npy', X)
-
-    K = 2
-    w_row_sum = 1
-    compare_W = True
-    pass
+def test_MPC_logging():
+    #TODO: this depends on being run after test_distr_matches_centralized();
+    #TODO: we should use fixtures instead
+    with open('/var/log/largenmf_MPC.log') as f:
+        s = f.read()
+        assert s.count('sending') + s.count('receiving') == 16

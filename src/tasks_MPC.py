@@ -1,7 +1,10 @@
 from __future__ import print_function
 from abc import ABCMeta, abstractmethod
+from exec_config import log_mpc_filename, log_mpc_level
 
-
+import logging
+logging.basicConfig(filename=log_mpc_filename, filemode='w',
+                    level=log_mpc_level)
 
 
 class MetaMPCMixin(object):
@@ -23,10 +26,11 @@ class MockMPCMixin(MetaMPCMixin):
 
     def send_to_MPC(self, obj, id):
         self.mpcs[id] = obj
-        print('mock_MPC-sending {id} of size {size}'.format(id=id, size=obj.size))
+        logging.info('mock_MPC-sending {id} of size {size}'.format(id=id,
+                                                           size=obj.size))
 
     def receive_from_MPC(self, id):
-        print('mock_MPC-receiving {id} from MPC'.format(id=id))
+        logging.info('mock_MPC-receiving {id} from MPC'.format(id=id))
         return self.mpcs[id]
 
 

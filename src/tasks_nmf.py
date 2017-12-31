@@ -14,7 +14,7 @@ import datetime
 
 # local imports
 from model_config import tm_nmf
-from exec_config import base_path, log_filename, log_level, available_RAM, \
+from exec_config import base_path, log_nmf_filename, log_nmf_level, available_RAM, \
     remove_intermediate
 from tasks_MPC import MultiPartyComputationParticipantMixin
 
@@ -28,12 +28,12 @@ from experiment_utils import expm_utils
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 
-with open(os.path.join(base_path, log_filename), 'w') as f:
+with open(os.path.join(base_path, log_nmf_filename), 'w') as f:
     f.write('New Log\n---')
 
 logging.basicConfig(
-    filename=log_filename,
-    level=log_level, format='%(levelname)s:%(message)s'
+    filename=log_nmf_filename,
+    level=log_nmf_level, format='%(levelname)s:%(message)s'
 )
 
 
