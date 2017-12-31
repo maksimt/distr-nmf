@@ -16,6 +16,7 @@ import datetime
 from model_config import tm_nmf
 from exec_config import base_path, log_filename, log_level, available_RAM, \
     remove_intermediate
+from tasks_MPC import MultiPartyComputationParticipantMixin
 
 # TODO: local dependencies to be included
 from matlabinterface import datasets
@@ -36,9 +37,11 @@ logging.basicConfig(
 )
 
 
-class RunMultiWorkerLocalNMF(luigi.WrapperTask):
+class MultiWorkerNMF(luigi.WrapperTask):
     dataset_name = luigi.Parameter(default='NIPS', description= \
         'Possible options are : 20NG Reuters [NIPS] Enron Twitter2016 Wiki')
+
+
     k = luigi.IntParameter(default=20, description='Number of topics: [20]')
     n_iter = luigi.IntParameter(default=50, description='Number of '
                                                         'iterations: [50]')
@@ -47,6 +50,14 @@ class RunMultiWorkerLocalNMF(luigi.WrapperTask):
     M = luigi.IntParameter(default=-1,
                            description='number of partitions that the input '
                                        'matrix should be split into')
+
+    # TODO: check for config file locally
+    execution_mode = luigi.Parameter(default='local', description=\
+         'Should we run the NMF locally or in a distributed configuration?'
+         '[local] : spawn all workers on the local machine'
+         'dummy_distr : pretend to run distributed but use 1 local worker'
+         'MLBox_distr : use ~/.MLBox/MLbox.py as configuration and run '
+         'distributed using the MLBox package')
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
@@ -83,15 +94,23 @@ class RunMultiWorkerLocalNMF(luigi.WrapperTask):
     # break. Smaller than the smallest l_2 norm of a row of T is safe.
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+    def __init__(self, *args, **kwargs):
+        self.dataset_params = {}
+
+        super(MultiWorkerNMF, self).__init__(*args, **kwargs)
+
     def requires(self):
         logging.log(logging.INFO, str(self.param_kwargs))
         kwargs_copy = copy.deepcopy(self.param_kwargs)
 
         dataset_name = kwargs_copy.pop('dataset_name')
         n_iter = kwargs_copy.pop('n_iter')
-        kwargs_copy.pop('M')
 
-        nmf_params = kwargs_copy
+        nmf_params = {}
+        for k in tm_nmf():
+            nmf_params[k] = kwargs_copy[k]
+
         ds = datasets.load_dataset(dataset_name, load_mat=False)
         n, d = ds['size']
         k = self.k
@@ -105,14 +124,16 @@ class RunMultiWorkerLocalNMF(luigi.WrapperTask):
         else:
             M = self.M
 
-        dataset_params = {
+        self.dataset_params.update( {
             'n': n, 'd': d, 'M': M,
-            'dataset_name': dataset_name
-        }
+            'dataset_name': dataset_name,
+            'execution_mode': self.execution_mode
+        })
+
         logging.log(logging.INFO, 'nmf_params={}\ndataset_params={}'.format(
-            nmf_params, dataset_params))
+            nmf_params, self.dataset_params))
         return GetTopics(nmf_params=nmf_params,
-                         dataset_params=dataset_params,
+                         dataset_params=self.dataset_params,
                          n_iter=n_iter,
                          topic_num=nmf_params['k'] - 1
                          )
@@ -145,7 +166,8 @@ class RunLocalExperiments(luigi.WrapperTask):
 
                 dataset_params = {
                     'n': n, 'd': d, 'M': M,
-                    'dataset_name': setv['dataset_name']
+                    'dataset_name': setv['dataset_name'],
+                    'execution_mode': 'local'
                 }
 
                 nmf_params['k'] = setv['k']
@@ -228,8 +250,8 @@ class EvalFroFitError(AutoLocalOutputMixin(base_path=base_path + '/evals/'),
 class GetResidualsFromNetwork(
     AutoLocalOutputMixin(base_path=base_path, output={'wR': 0, 'nw': 0}),
     LoadInputDictMixin,
-    luigi.Task,
-    MultiPartyComputationParticipantMixin
+    MultiPartyComputationParticipantMixin(type='dummy'),
+    luigi.Task
 ):
     nmf_params = luigi.DictParameter()
     dataset_params = luigi.DictParameter()
@@ -316,17 +338,23 @@ class AggregateResiduals(
                 prev_iter = self.n_iter
 
             # if running locally:
-            for m in range(self.dataset_params['M']):
-                rtv['resid'][m] = GetResiduals(
-                    nmf_params=self.nmf_params,
-                    dataset_params=self.dataset_params,
-                    n_iter=prev_iter,
-                    group_id=m,
-                    topic_num=prev_topic
-                )
+            if self.dataset_params['execution_mode']=='local':
+                for m in range(self.dataset_params['M']):
+                    rtv['resid'][m] = GetResiduals(
+                        nmf_params=self.nmf_params,
+                        dataset_params=self.dataset_params,
+                        n_iter=prev_iter,
+                        group_id=m,
+                        topic_num=prev_topic
+                    )
 
                 # if running distributed: depend on GetResidualsFromNet which
                 # depends on SendResidualsToNet
+            elif 'distr' in self.dataset_params['execution_mode']:
+                yield GetResidualsFromNetwork(nmf_params=self.nmf_params,
+                                              dataset_params=self.dataset_params,
+                                              n_iter=self.n_iter,
+                                              topic_num=self.topic_num)
 
         yield rtv
 
@@ -481,15 +509,17 @@ class GetResiduals(
         portion of the dataset; prevents out-of-memory error from too many
         jobs trying to load the dataset"""
         # n/M* d * 8 / available_RAM
-        n, M, d, k = self.dataset_params['n'], self.dataset_params['M'], \
-                     self.dataset_params['d'], self.nmf_params['k']
+        if self.dataset_params['execution_mode']=='local':
+            n, M, d, k = self.dataset_params['n'], self.dataset_params['M'], \
+                         self.dataset_params['d'], self.nmf_params['k']
 
-        dpp = float(n) / M
-        mem = dpp * d * 8  # X
-        mem += k * d * 8  # T
-        mem += dpp * k * 8
+            dpp = float(n) / M
+            mem = dpp * d * 8  # X
+            mem += k * d * 8  # T
+            mem += dpp * k * 8
 
-        return {'memory': mem / available_RAM}
+            return {'memory': mem / available_RAM}
+        return {}
 
     def requires(self):
         self.k = self.nmf_params['k']
@@ -549,15 +579,17 @@ class GetWeights(AutoLocalOutputMixin(base_path=base_path),
         portion of the dataset; prevents out-of-memory error from too many
         jobs trying to load the dataset"""
         # n/M* d * 8 / available_RAM
-        n, M, d, k = self.dataset_params['n'], self.dataset_params['M'], \
-                     self.dataset_params['d'], self.nmf_params['k']
+        if self.dataset_params['execution_mode'] == 'local':
+            n, M, d, k = self.dataset_params['n'], self.dataset_params['M'], \
+                         self.dataset_params['d'], self.nmf_params['k']
 
-        dpp = float(n) / M
-        mem = dpp * d * 8  # X
-        mem += k * d * 8  # T
-        mem += dpp * k * 8
+            dpp = float(n) / M
+            mem = dpp * d * 8  # X
+            mem += k * d * 8  # T
+            mem += dpp * k * 8
 
-        return {'memory': mem / available_RAM}
+            return {'memory': mem / available_RAM}
+        return {}
 
     def requires(self):
         self.k = self.nmf_params['k']
@@ -759,5 +791,5 @@ def _get_nmf_residuals(X, W, T, t, reg_w_l1=0, reg_w_l2=0, calc_res=False,
 
 
 if __name__ == '__main__':
-    T = RunMultiWorkerLocalNMF()
+    T = MultiWorkerNMF()
     luigi.build([T])

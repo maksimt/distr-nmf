@@ -27,6 +27,47 @@ def _mask(X, density):
     return X
 
 
+
+
+
+def test_correct_hash(n=100, d=25, seed=0, M=1, n_iter=2):
+    """This test may break if new parameters are added to tasks but they are
+    not added to the parameter dicts used for testing; this is mostly useful
+    to make sure the other tests can still run"""
+    X = _gen_random_mat(n, d, 0.1, random_seed=seed)
+    idf = True
+    tasks_nmf.remove_intermediate = False
+
+    X_fn = '/tmp/X.npy'
+    np.save('/tmp/X.npy', X)
+
+
+    K = 2
+    w_row_sum = 1
+
+    nmf_params = {
+        "reg_w_l1": 0.0, "project_W_each_iter": True, "random_seed": 0,
+        "reg_w_l2": 0.0, "reg_t_l2": 0.0, "k": K, "reg_t_l1": 0.0,
+        "project_T_each_iter": True, "agg": "double_precision_nonprivate",
+        "init": "random", "t_row_sum": 1.0, "idf": idf,
+        "reset_topic_method": "random",
+        "w_row_sum": w_row_sum
+    }
+    dataset_params = {
+        "M": M, "d": d, "dataset_name": X_fn, "n": n,
+        'execution_mode': 'local'
+    }
+
+    Ws = tasks_nmf.GetWeights(dataset_params=dataset_params,
+                              nmf_params=nmf_params,
+                              n_iter=1,
+                              topic_num=K - 1,
+                              group_id=0
+                              )
+
+    assert Ws.output().path.split('/')[-1] == 'GetWeights__417225404975075603'
+
+
 # TODO: add fixtures and break down into multiple tests
 @pytest.mark.parametrize(('n', 'd', 'seed', 'M', 'n_iter'),
                          [
@@ -43,7 +84,7 @@ def test_distr_matches_centralized(n, d, seed, M, n_iter):
     np.save('/tmp/X.npy', X)
 
     for fn in os.listdir('/tmp/'):
-        if fn.startswith('Gen') or fn.startswith('Get'):
+        if fn.startswith('Gen') or fn.startswith('Get') or fn.startswith('Agg'):
             try:
                 os.remove('/tmp/' + fn)
             except OSError as e:
@@ -56,11 +97,11 @@ def test_distr_matches_centralized(n, d, seed, M, n_iter):
         X = tfidf(X)
     X = normalize(X)
 
-    LocalNMFTaks = tasks_nmf.RunMultiWorkerLocalNMF(dataset_name=X_fn,
-                                                    k=K,
-                                                    n_iter=n_iter,
-                                                    idf=idf,
-                                                    M=M)
+    LocalNMFTaks = tasks_nmf.MultiWorkerNMF(dataset_name=X_fn,
+                                            k=K,
+                                            n_iter=n_iter,
+                                            idf=idf,
+                                            M=M)
     luigi.build([LocalNMFTaks], local_scheduler=True)
 
     nmf_params = {
@@ -71,7 +112,10 @@ def test_distr_matches_centralized(n, d, seed, M, n_iter):
         "reset_topic_method": "random",
         "w_row_sum": w_row_sum
     }
-    dataset_params = {"M": M, "d": d, "dataset_name": X_fn, "n": n}
+    dataset_params = {
+        "M": M, "d": d, "dataset_name": X_fn, "n": n,
+        'execution_mode': 'local'
+    }
 
     for it in range(1, n_iter):
         GT = tasks_nmf.GetTopics(nmf_params=nmf_params,
@@ -104,3 +148,16 @@ def test_distr_matches_centralized(n, d, seed, M, n_iter):
         if compare_W:
             assert np.allclose(W, base_nmf_soln['W'])
         assert np.allclose(T, base_nmf_soln['T'])
+
+def pass_test_dummy_MPC():
+    X = _gen_random_mat(10, 25, 0.1, random_seed=0)
+    idf = True
+    tasks_nmf.remove_intermediate = False
+
+    X_fn = '/tmp/X.npy'
+    np.save('/tmp/X.npy', X)
+
+    K = 2
+    w_row_sum = 1
+    compare_W = True
+    pass
