@@ -55,7 +55,7 @@ class MultiWorkerNMF(luigi.WrapperTask):
     execution_mode = luigi.Parameter(default='local', description=\
          'Should we run the NMF locally or in a distributed configuration?'
          '[local] : spawn all workers on the local machine'
-         'dummy_distr : pretend to run distributed but use 1 local worker'
+         'mock_distr_MPC : pretend to run distributed but use 1 local worker'
          'MLBox_distr : use ~/.MLBox/MLbox.py as configuration and run '
          'distributed using the MLBox package')
 
@@ -103,6 +103,10 @@ class MultiWorkerNMF(luigi.WrapperTask):
     def requires(self):
         logging.log(logging.INFO, str(self.param_kwargs))
         kwargs_copy = copy.deepcopy(self.param_kwargs)
+
+        assert self.execution_mode in ['local', 'mock_distr_MPC',
+                                       'MLBox_distr'],\
+            'Unsupported execution mode {}'.format(self.execution_mode)
 
         dataset_name = kwargs_copy.pop('dataset_name')
         n_iter = kwargs_copy.pop('n_iter')
@@ -250,7 +254,7 @@ class EvalFroFitError(AutoLocalOutputMixin(base_path=base_path + '/evals/'),
 class GetResidualsFromNetwork(
     AutoLocalOutputMixin(base_path=base_path, output={'wR': 0, 'nw': 0}),
     LoadInputDictMixin,
-    MultiPartyComputationParticipantMixin(type='dummy'),
+    MultiPartyComputationParticipantMixin(type='mock_distr_MPC'),
     luigi.Task
 ):
     nmf_params = luigi.DictParameter()
@@ -269,8 +273,10 @@ class GetResidualsFromNetwork(
         self.reg_t_l2 = self.nmf_params['reg_t_l2']
         self.init = self.nmf_params['init']
 
+        rtv = {}
+
         if self.n_iter >= 1:
-            rtv = {}
+
             prev_topic = self.topic_num - 1
 
             # rolling back index to end of previous loop
@@ -289,17 +295,22 @@ class GetResidualsFromNetwork(
                 topic_num=prev_topic
             )
 
+        return rtv
+
     def run(self):
-        inp = self.load_input_dict()
+        if self.n_iter >= 1:
+            inp = self.load_input_dict(all_numpy=True)
 
-        self.send_to_MPC(inp['wR'], 'wR')
-        self.send_to_MPC(inp['nw'], 'nw')
+            self.send_to_MPC(inp['resid']['wR'], 'wR')
+            self.send_to_MPC(inp['resid']['nw'], 'nw')
 
-        # each receive call will block; potentially these could be done
-        # asynchronouslly, but that is more appropriate to be handled within
-        # the send/receive implementation
-        wR = self.receive_from_MPC('wR')
-        nw = self.receive_from_MPC('nw')
+            # each receive call will block; potentially these could be done
+            # asynchronouslly, but that is more appropriate to be handled within
+            # the send/receive implementation
+            wR = self.receive_from_MPC('wR')
+            nw = self.receive_from_MPC('nw')
+        else:
+            raise IndexError('Residuals for iteration 0 dont make sense')
 
         with self.output()['wR'].open('w') as f:
             np.save(f, wR)
@@ -323,9 +334,10 @@ class AggregateResiduals(
         self.reg_t_l1 = self.nmf_params['reg_t_l1']
         self.reg_t_l2 = self.nmf_params['reg_t_l2']
         self.init = self.nmf_params['init']
+        rtv = {}
 
         if self.n_iter >= 1:
-            rtv = {}
+
             rtv['resid'] = {}
             prev_topic = self.topic_num - 1
 
@@ -351,10 +363,12 @@ class AggregateResiduals(
                 # if running distributed: depend on GetResidualsFromNet which
                 # depends on SendResidualsToNet
             elif 'distr' in self.dataset_params['execution_mode']:
-                yield GetResidualsFromNetwork(nmf_params=self.nmf_params,
-                                              dataset_params=self.dataset_params,
-                                              n_iter=self.n_iter,
-                                              topic_num=self.topic_num)
+                rtv['resid'][0] = GetResidualsFromNetwork(
+                                          nmf_params=self.nmf_params,
+                                          dataset_params=self.dataset_params,
+                                          n_iter=self.n_iter,
+                                          topic_num=self.topic_num
+                                   )
 
         yield rtv
 
@@ -728,7 +742,14 @@ class GetTFIDF(AutoLocalOutputMixin(base_path=base_path),
                LoadInputDictMixin,
                luigi.Task
                ):
+    # TODO; currently this is global IDF weights (which is correct for a
+    # centralized dataset being computed my multiple workers) but not correct
+    #  for a comparing a distributed computation vs centralized, since each
+    # party will compute their own IDF; or we can have a pre-step where we
+    # compute the global IDF weights by secure sum.
     dataset_name = luigi.Parameter()
+
+    resources = {'memory': 1.0}
 
     def run(self):
         ds = datasets.load_dataset(self.dataset_name)

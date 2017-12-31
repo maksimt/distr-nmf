@@ -69,13 +69,14 @@ def test_correct_hash(n=100, d=25, seed=0, M=1, n_iter=2):
 
 
 # TODO: add fixtures and break down into multiple tests
-@pytest.mark.parametrize(('n', 'd', 'seed', 'M', 'n_iter'),
+@pytest.mark.parametrize(('n', 'd', 'seed', 'M', 'n_iter', 'mode'),
                          [
-                             (100, 25, 0, 1, 2),
-                             (20, 25, 0, 3, 2),
-                             (21, 26, 1, 5, 2)
+                             (100, 25, 0, 1, 2, 'local'),
+                             (100, 25, 0, 1, 2, 'mock_distr_MPC'),
+                             (20, 25, 0, 3, 2, 'local'),
+                             (21, 26, 1, 5, 2, 'local')
                          ])
-def test_distr_matches_centralized(n, d, seed, M, n_iter):
+def test_distr_matches_centralized(n, d, seed, M, n_iter, mode):
     X = _gen_random_mat(n, d, 0.1, random_seed=seed)
     idf = True
     tasks_nmf.remove_intermediate = False
@@ -101,7 +102,8 @@ def test_distr_matches_centralized(n, d, seed, M, n_iter):
                                             k=K,
                                             n_iter=n_iter,
                                             idf=idf,
-                                            M=M)
+                                            M=M,
+                                            execution_mode=mode)
     luigi.build([LocalNMFTaks], local_scheduler=True)
 
     nmf_params = {
@@ -114,7 +116,7 @@ def test_distr_matches_centralized(n, d, seed, M, n_iter):
     }
     dataset_params = {
         "M": M, "d": d, "dataset_name": X_fn, "n": n,
-        'execution_mode': 'local'
+        'execution_mode': mode
     }
 
     for it in range(1, n_iter):
